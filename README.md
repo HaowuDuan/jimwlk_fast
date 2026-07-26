@@ -10,7 +10,7 @@ where ξ are SU(3) color noise fields, K is the Weizsäcker-Williams kernel, and
 
 ## Performance and optimizations
 
-The implementation is optimized for the many independent 3×3 SU(3) operations in each lattice update. The original CuPy implementation spent 95.5% of its profiled GPU time in generic batched GEMM kernels and launched thousands of elementwise kernels. The optimized path instead uses workload-specific CUDA kernels and reduces the N=1024 evolution kernel path from **1.466 s to approximately 9 ms per step (about 160× faster)**.
+The implementation is optimized for the many independent 3×3 SU(3) operations in each lattice update. The original CuPy implementation spent 95.5% of its profiled GPU time in generic batched GEMM kernels and launched thousands of elementwise kernels. The optimized path instead uses workload-specific CUDA kernels to accelerate the dominant SU(3) operations.
 
 ### Optimization techniques
 
@@ -20,7 +20,7 @@ The implementation is optimized for the many independent 3×3 SU(3) operations i
 - **Lower FFT and memory overhead:** real-to-complex FFTs store only the half-spectrum where possible; the right-side convolution is fused; plane-major contiguous layouts improve coalescing; and the propagator and Weizsäcker-Williams kernel are cached.
 - **Fused observables:** gauge-field extraction, adjoint Wilson-line construction, WW-field extraction, and power-spectrum accumulation avoid the large temporary arrays produced by `einsum` chains.
 
-### Profiled result
+### Profiled hot paths
 
 The table compares the naive CuPy profile with the optimized Nsight Compute profile on an NVIDIA GeForce RTX 3090, using N=1024, L=64, N_y=50, and `dY=0.01`.
 
@@ -30,9 +30,18 @@ The table compares the naive CuPy profile with the optimized Nsight Compute prof
 | Initial-condition path ordering | 506.2 ms | 4.53 ms | 112× |
 | Adjoint rotation `V†ξV` (two polarizations) | 571.7 ms | 0.632 ms | 904× |
 | Wilson-line update `exp_L · V · exp_R` | 278.9 ms | 0.419 ms | 666× |
-| One evolution step | 1.466 s | ≈9 ms | ≈160× |
 
-For a standard 100-step run (`Yf=1.0`, `dY=0.01`), typical end-to-end time is about **1.2 s/config at N=1024** and **0.3 s/config at N=512** on the RTX 3090. First-call CUDA JIT compilation is excluded. The approximately 9 ms optimized step is the sum of profiled CUDA and FFT kernel time, so wall-clock results vary with measurement frequency, enabled observables, GPU, CUDA/CuPy versions, and memory pressure. See [`naive_profile_report.md`](naive_profile_report.md) and [`ncu_profile_report.md`](ncu_profile_report.md) for the detailed measurements.
+### Evolution benchmark
+
+For the same N=512, 100-step workload, excluding observable evaluation, the measured average evolution time per configuration is:
+
+| Implementation | Evolution time/config | Speedup vs CPU | Speedup vs pure CuPy |
+|----------------|----------------------:|---------------:|---------------------:|
+| CPU | 173.6400 s | 1.00× | — |
+| Pure CuPy | 38.1720 s | 4.55× | 1.00× |
+| **Optimized `jimwlk_cuda`** | **0.2455 s** | **707.3×** | **155.5×** |
+
+The optimized implementation is therefore **155.5× faster than pure CuPy** and **707.3× faster than the CPU version** for this evolution-only benchmark. Observable costs must be measured separately and depend strongly on which quantities are enabled and how frequently they are sampled. Wall-clock results vary with hardware, CUDA/CuPy versions, and memory pressure. See [`naive_profile_report.md`](naive_profile_report.md) and [`ncu_profile_report.md`](ncu_profile_report.md) for the detailed kernel measurements.
 
 ## Requirements
 
